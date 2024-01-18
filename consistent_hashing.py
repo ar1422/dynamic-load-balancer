@@ -1,91 +1,58 @@
 import mmh3
-
 from typing import Dict
 from constants import HASH_SEED_VALUE, INITIAL_TOKENS
 
 
-class ConsistentHashing:
+class ConsistentHashing(object):
 
-    def __init__(self, nodes: int, hash_func=mmh3.hash, seed: int = HASH_SEED_VALUE, tokens_initial: int = INITIAL_TOKENS):
+    def __init__(self, nodes, seed=HASH_SEED_VALUE, initial_tokens=INITIAL_TOKENS):
 
-        self._validate_node(nodes)
+        self.validate_node_value(nodes)
+        self.validate_seed_value(seed)
+
         self.nodes = nodes
         self.seed = seed
-        self.tokens_initial = tokens_initial
+        self.initial_tokens = initial_tokens
         self.token_hashes = {}
-        self._hash_func = hash_func
-        self.node_tokens = {idx: self.tokens_initial for idx in range(self.nodes)}
+        self.node_tokens = {index: self.initial_tokens for index in range(self.nodes)}
         self._update_hashes()
 
-    @staticmethod
-    def _validate_node(nodes):
-        if not isinstance(nodes, int):
-            raise TypeError("Number of Nodes should be integer.")
-
-        if nodes < 1:
-            raise ValueError("Number of nodes should be positive.")
-
-    @staticmethod
-    def _validate_node_tokens(tokens):
-        if not isinstance(tokens, int):
-            raise TypeError("Tokens should be integer.")
-
-        if tokens < 1:
-            raise ValueError("tokens should be positive.")
-
-    def _validate_remove_last_node(self):
-        if self.nodes == 1:
-            raise ValueError("Current nodes = 1. Cannot remove when there is only one node left.")
-
-    @property
-    def get_max_token_value(self):
-        return max(self.token_hashes.values())
-
-    @property
-    def total_tokens(self) -> int:
-        return sum(self.node_tokens.values())
-
-    @property
-    def node_with_smallest_hash(self) -> int:
-        return min((h, node_idx) for (node_idx, _), h in self.token_hashes.items())[1]
-
-    def _closest_node_after_key(self, hash_value: int) -> int:
-        return min((abs(h - hash_value), node_idx) for (node_idx, _), h in self.token_hashes.items() if hash_value < h)[1]
-
-    def lookup_key(self, key):
-
-        hash_value = self._hash_func(key=key, seed=self.seed)
-        if hash_value > self.get_max_token_value:
+    def key_lookup(self, key):
+        key_hash = self._hash(key)
+        if key_hash > self.max_token_value:
             return self.node_with_smallest_hash
         else:
-            return self._closest_node_after_key(hash_value)
+            self._closest_node_after_key(key_hash)
 
-    def halve_tokens_for_node(self, node_idx: int) -> bool:
-        if all(t == 1 for t in self.token_hashes.values()):
-            self.node_tokens = {idx: self.tokens_initial for idx in range(self.nodes)}
+    def distribute_keyspace(self, node_index):
+
+        if self._all_nodes_have_one_token():
+            self.node_tokens = {idx: self.initial_tokens for idx in range(self.nodes)}
             self._update_hashes()
 
-        if self.node_tokens[node_idx] > 1:
-            self.update(node_idx=node_idx, tokens=self.node_tokens[node_idx] >> 1)
+        if self.node_tokens[node_index] > 1:
+            self.update(node_index, self.node_tokens[node_index] >> 1)
             return True
         else:
-            print(f"can't halve the tokens for node index {node_idx}")
+            print("Cannot halve the tokens any further for the node index - {}".format(node_index))
             return False
 
-    def update(self, node_idx: int, tokens: int) -> None:
+    def _all_nodes_have_one_token(self):
+        return all(token == 1 for token in self.token_hashes.values())
 
-        self._update_node_tokens(node_idx, tokens)
+    def update(self, node_index, tokens):
+
+        self._update_node_tokens(node_index, tokens)
         self._update_hashes()
 
-    def add_node(self, tokens: int) -> None:
+    def add_node(self, tokens):
 
+        self.node_tokens[self.nodes] = tokens
         self.nodes += 1
-        self.node_tokens[self.nodes - 1] = tokens
         self._update_hashes()
 
-    def remove_last_node(self) -> None:
-
-        self._validate_remove_last_node()
+    def remove_node(self) -> None:
+        assert self.nodes > 1
         del self.node_tokens[self.nodes - 1]
         self.nodes -= 1
         self._update_hashes()
@@ -96,12 +63,67 @@ class ConsistentHashing:
             self._update_node_tokens(node_idx, tokens)
         self._update_hashes()
 
-    def _update_hashes(self) -> None:
-        self.token_hashes = {(node, token): self._hash_func(key=f"{node}-{token}", seed=self.seed)
-                             for node in range(self.nodes)
-                             for token in range(self.node_tokens[node])
-                             }
+    def _hash(self, key: str) -> int:
+        return mmh3.hash(key, seed=self.seed)
 
-    def _update_node_tokens(self, node, tokens) -> None:
-        self._validate_node_tokens(tokens)
-        self.node_tokens[node] = tokens
+    def _update_hashes(self) -> None:
+        key_format = "{}-{}"
+        self.token_hashes = {(node_index, token_index): self._hash(key_format.format(node_index, token_index))
+                             for node_index in range(self.nodes)
+                             for token_index in range(self.node_tokens[node_index])}
+
+    def _update_node_tokens(self, node_index, tokens):
+        self.validate_token_value(tokens)
+        self.node_tokens[node_index] = tokens
+
+    @property
+    def node_with_smallest_hash(self):
+        return min((h, node_idx) for (node_idx, _), h in self.token_hashes.items())[1]
+
+    def _closest_node_after_key(self, key_hash):
+        return min((abs(h - key_hash), node_idx) for (node_idx, _), h in self.token_hashes.items() if key_hash < h)[1]
+
+    @property
+    def total_tokens(self):
+        return sum(self.node_tokens.values())
+
+    @property
+    def max_token_value(self):
+        return max(self.token_hashes.values())
+
+    @staticmethod
+    def validate_node_value(nodes):
+        if not isinstance(nodes, int):
+            raise TypeError("Node values should be an integer")
+        if nodes < 1:
+            raise ValueError("Node value should be positive.")
+
+    @staticmethod
+    def validate_seed_value(seed):
+        if not isinstance(seed, int):
+            raise TypeError("Seed values should be an integer")
+        if seed < 1:
+            raise ValueError("Seed value should be positive.")
+
+    @staticmethod
+    def validate_token_value(tokens):
+        if not isinstance(tokens, int):
+            raise TypeError("Token values should be an integer")
+        if tokens < 1 or not isinstance(tokens, int):
+            raise ValueError("Token values should be positive.")
+
+
+class ConsistentHashingDouble(ConsistentHashing):
+    def __init__(self, nodes: int, seed: int = HASH_SEED_VALUE):
+        super().__init__(nodes=nodes, seed=seed, initial_tokens=1)
+
+    def distribute_keyspace(self, node_index):
+        updated_node_tokens = {}
+        for index, tokens in self.node_tokens.items():
+            if index == node_index:
+                updated_node_tokens[index] = tokens
+            else:
+                updated_node_tokens[index] = 2 * tokens
+
+        self.update_batch(node_tokens=updated_node_tokens)
+        return True

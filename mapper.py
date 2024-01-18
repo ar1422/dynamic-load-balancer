@@ -37,7 +37,7 @@ class Mapper:
         self.done = True
 
     def reschedule_output(self, node_idx):
-        self.ch.halve_tokens_for_node(node_idx=node_idx)
+        self.ch.distribute_keyspace(node_idx)
 
     def done(self):
         return self.done
